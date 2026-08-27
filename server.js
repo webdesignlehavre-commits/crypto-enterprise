@@ -34,6 +34,7 @@ app.use(session({
   cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 
+app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== CRYPTO PRICE API =====
@@ -72,23 +73,102 @@ function fetchCryptoHistory(coinId) {
 }
 
 // ===== STEAM OPENID =====
-const STEAM_API_KEY = process.env.STEAM_API_KEY || '';
+const http = require('http');
 
-app.get('/auth/steam', (req, res) => {
-  const returnTo = `${BASE_URL}/auth/steam/callback`;
-  const params = new URLSearchParams({
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+}
+
+function httpPost(url, body) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const postData = body;
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || 80,
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
+  });
+}
+
+function buildSteamParams(returnTo, identity) {
+  return {
     'openid.ns': 'http://specs.openid.net/auth/2.0',
     'openid.mode': 'checkid_setup',
     'openid.return_to': returnTo,
-    'openid.set_claim_url': 'http://steamcommunity.com/openid/id',
-    'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select'
-  });
-  res.redirect(`https://steamcommunity.com/openid/login?${params.toString()}`);
+    'openid.realm': new URL(returnTo).origin,
+    'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
+    'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select'
+  };
+}
+
+app.get('/auth/steam', (req, res) => {
+  const host = req.get('host');
+  const protocol = req.protocol;
+  const returnTo = `${protocol}://${host}/auth/steam/callback`;
+  const params = buildSteamParams(returnTo);
+  const qs = new URLSearchParams(params).toString();
+  res.redirect(`https://steamcommunity.com/openid/login?${qs}`);
 });
 
-app.get('/auth/steam/callback', (req, res) => {
-  const claimedId = req.query['openid.identity'];
-  if (claimedId) {
+app.get('/auth/steam/callback', async (req, res) => {
+  try {
+    const mode = req.query['openid.mode'];
+    if (mode !== 'id_res') {
+      return res.redirect('/?error=no_response');
+    }
+
+    const returnTo = `${req.protocol}://${req.get('host')}/auth/steam/callback`;
+
+    const verifyParams = {
+      'openid.assoc_handle': req.query['openid.assoc_handle'],
+      'openid.signed': req.query['openid.signed'],
+      'openid.sig': req.query['openid.sig'],
+      'openid.ns': req.query['openid.ns'],
+      'openid.mode': 'check_authentication',
+      'openid.return_to': returnTo
+    };
+
+    const signedFields = req.query['openid.signed'].split(',');
+    signedFields.forEach(field => {
+      const key = 'openid.' + field;
+      if (req.query[key]) {
+        verifyParams[key] = req.query[key];
+      }
+    });
+
+    const body = new URLSearchParams(verifyParams).toString();
+    const verifyResponse = await httpPost('https://steamcommunity.com/openid/login', body);
+
+    if (!verifyResponse.includes('is_valid:true')) {
+      return res.redirect('/?error=validation_failed');
+    }
+
+    const claimedId = req.query['openid.claimed_id'] || req.query['openid.identity'];
+    if (!claimedId) {
+      return res.redirect('/?error=no_identity');
+    }
+
     const steamId = claimedId.split('/').pop();
     const db = loadDB();
     let user = db.users.find(u => u.steamId === steamId);
@@ -107,8 +187,9 @@ app.get('/auth/steam/callback', (req, res) => {
     req.session.userId = user.id;
     req.session.steamId = steamId;
     res.redirect('/');
-  } else {
-    res.redirect('/?error=auth_failed');
+  } catch (e) {
+    console.error('Steam auth error:', e);
+    res.redirect('/?error=auth_exception');
   }
 });
 
