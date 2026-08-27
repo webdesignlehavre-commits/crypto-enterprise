@@ -31,8 +31,19 @@ app.use(session({
   secret: 'crypto-enterprise-secret-2026',
   resave: false,
   saveUninitialized: true,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
+  cookie: {
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    secure: false,
+    sameSite: 'lax'
+  }
 }));
+
+app.use((req, res, next) => {
+  if (req.header('x-forwarded-proto') === 'https') {
+    req.session.cookie.secure = true;
+  }
+  next();
+});
 
 app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
@@ -124,8 +135,8 @@ function buildSteamParams(returnTo, identity) {
 
 app.get('/auth/steam', (req, res) => {
   const host = req.get('host');
-  const protocol = req.protocol;
-  const returnTo = `${protocol}://${host}/auth/steam/callback`;
+  const proto = req.header('x-forwarded-proto') || req.protocol || 'https';
+  const returnTo = `${proto}://${host}/auth/steam/callback`;
   const params = buildSteamParams(returnTo);
   const qs = new URLSearchParams(params).toString();
   res.redirect(`https://steamcommunity.com/openid/login?${qs}`);
@@ -138,7 +149,9 @@ app.get('/auth/steam/callback', async (req, res) => {
       return res.redirect('/?error=no_response');
     }
 
-    const returnTo = `${req.protocol}://${req.get('host')}/auth/steam/callback`;
+    const host = req.get('host');
+    const proto = req.header('x-forwarded-proto') || req.protocol || 'https';
+    const returnTo = `${proto}://${host}/auth/steam/callback`;
 
     const verifyParams = {
       'openid.assoc_handle': req.query['openid.assoc_handle'],
@@ -186,7 +199,10 @@ app.get('/auth/steam/callback', async (req, res) => {
     }
     req.session.userId = user.id;
     req.session.steamId = steamId;
-    res.redirect('/');
+    req.session.save((err) => {
+      if (err) console.error('Session save error:', err);
+      res.redirect('/');
+    });
   } catch (e) {
     console.error('Steam auth error:', e);
     res.redirect('/?error=auth_exception');

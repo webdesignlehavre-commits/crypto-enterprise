@@ -467,9 +467,9 @@
       CryptoVerse
     </div>
     <div class="nav">
-      <button class="nav-btn active" onclick="showTab('market')">Marche</button>
-      <button class="nav-btn" onclick="showTab('portfolio')">Portefeuille</button>
-      <button class="nav-btn" onclick="showTab('admin')">Admin</button>
+      <button class="nav-btn active" onclick="showTab('market', this)">Marche</button>
+      <button class="nav-btn" onclick="showTab('portfolio', this)">Portefeuille</button>
+      <button class="nav-btn" onclick="showTab('admin', this)">Admin</button>
     </div>
     <div class="user-section" id="userSection">
       <a href="/auth/steam" class="steam-btn" id="steamLoginBtn">
@@ -488,7 +488,7 @@
     <div class="hero">
       <h1>CryptoVerse Enterprise</h1>
       <p>Le futur du trading de cryptomonnaies. Connectez-vous avec Steam pour commencer.</p>
-      <a href="/auth/steam" class="steam-btn" style="display:inline-flex;padding:15px 40px;font-size:1.1em">
+      <a href="/auth/steam" class="steam-btn" id="steamLoginBtn2" style="display:inline-flex;padding:15px 40px;font-size:1.1em">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.991 3.657 9.128 8.438 9.879V14.89h-2.54V12h2.54V9.797c0-2.506 1.492-3.89 3.777-3.89 1.094 0 2.238.195 2.238.195v2.46h-1.26c-1.243 0-1.63.771-1.63 1.562V12h2.773l-.443 2.89h-2.33v6.989C18.343 21.129 22 16.99 22 12c0-5.523-4.477-10-10-10z"/></svg>
         Connexion Steam pour Commencer
       </a>
@@ -587,11 +587,12 @@
       { id: 'litecoin', symbol: 'LTC', name: 'Litecoin', color: '#bfbbbb', icon: 'Ł' }
     ];
 
-    function showTab(tab) {
+    function showTab(tab, btn) {
+      if (!currentUser) return;
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
-      event.target.classList.add('active');
+      if (btn) btn.classList.add('active');
       if (tab === 'portfolio') loadPortfolio();
       if (tab === 'admin') loadAdminUsers();
     }
@@ -675,7 +676,7 @@
 
     async function loadPortfolio() {
       if (!currentUser) return;
-      const res = await fetch('/api/portfolio');
+      const res = await fetch('/api/portfolio', { credentials: 'same-origin' });
       const data = await res.json();
       
       const grid = document.getElementById('portfolioGrid');
@@ -782,6 +783,7 @@
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ code })
       });
       const data = await res.json();
@@ -795,7 +797,7 @@
     }
 
     async function loadAdminUsers() {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/admin/users', { credentials: 'same-origin' });
       if (res.status !== 200) return;
       const data = await res.json();
       
@@ -919,6 +921,7 @@
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify(body)
       });
       
@@ -956,21 +959,21 @@
 
     async function checkUser() {
       try {
-        const res = await fetch('/api/me');
+        const res = await fetch('/api/me', { credentials: 'same-origin' });
         const data = await res.json();
         if (data.logged) {
           currentUser = data.user;
           document.getElementById('steamLoginBtn').style.display = 'none';
+          document.getElementById('steamLoginBtn2').style.display = 'none';
           document.getElementById('userInfo').style.display = 'flex';
           document.getElementById('userAvatar').src = data.user.avatar;
           document.getElementById('userName').textContent = data.user.username;
           document.getElementById('notLoggedIn').style.display = 'none';
           document.getElementById('mainContent').style.display = 'block';
-          if (data.user.role === 'admin') {
-            document.querySelector('.nav-btn:last-child').style.display = 'block';
-          }
+          loadPrices();
+          loadPortfolio();
         }
-      } catch (e) {}
+      } catch (e) { console.error('checkUser error:', e); }
     }
 
     // Init
